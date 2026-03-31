@@ -70,18 +70,18 @@ pub fn parsing(input: &str) -> Result<(Command, Vec<String>), String> {
     let command_args = args;
 
     let command = match command_str.as_str() {
-        "cat"  => Command::Cat,
-        "cd"   => Command::Cd,
-        "cp"   => Command::Cp,
+        "cat" => Command::Cat,
+        "cd" => Command::Cd,
+        "cp" => Command::Cp,
         "echo" => Command::Echo,
         "exit" => Command::Exit,
         "help" => Command::Help,
-        "ls"   => Command::Ls,
-        "mkdir"=> Command::Mkdir,
-        "mv"   => Command::Mv,
-        "pwd"  => Command::Pwd,
-        "rm"   => Command::Rm,
-        other  => Command::Unknown(other.to_string()),
+        "ls" => Command::Ls,
+        "mkdir" => Command::Mkdir,
+        "mv" => Command::Mv,
+        "pwd" => Command::Pwd,
+        "rm" => Command::Rm,
+        other => Command::Unknown(other.to_string()),
     };
 
     Ok((command, command_args))

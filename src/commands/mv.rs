@@ -11,7 +11,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     // Moving multiple sources: destination must be a directory
     if sources.len() > 1 && !dest.is_dir() {
-        return Err(format!("mv: target '{}' is not a directory", dest.display()));
+        return Err(format!(
+            "mv: target '{}' is not a directory",
+            dest.display()
+        ));
     }
 
     for src_str in sources {
@@ -22,7 +25,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
 
         let actual_dest = if dest.is_dir() {
-            let name = src.file_name()
+            let name = src
+                .file_name()
                 .ok_or_else(|| format!("mv: {}: invalid path", src_str))?;
             dest.join(name)
         } else {

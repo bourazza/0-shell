@@ -30,7 +30,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let sources = &file_args[..file_args.len() - 1];
 
     if sources.len() > 1 && !dest.is_dir() {
-        return Err(format!("cp: target '{}' is not a directory", dest.display()));
+        return Err(format!(
+            "cp: target '{}' is not a directory",
+            dest.display()
+        ));
     }
 
     for src_str in sources {
@@ -41,7 +44,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
 
         let actual_dest = if dest.is_dir() {
-            let name = src.file_name()
+            let name = src
+                .file_name()
                 .ok_or_else(|| format!("cp: {}: invalid path", src_str))?;
             dest.join(name)
         } else {

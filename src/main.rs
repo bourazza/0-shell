@@ -1,26 +1,33 @@
+mod commands;
+mod parser;
+mod shell;
 mod utils;
 
-use utils::*;
-
-
-
-   mod parser;
-mod shell;
-mod commands;
-
-use std::env;
-use std::io::{self, Write};
 use parser::Command;
 use shell::Shell;
+use std::env;
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use utils::*;
+
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     println!("\x1b[1;32m0-shell\x1b[0m — type \x1b[1mhelp\x1b[0m for available commands\n");
 
     let mut shell = Shell::new();
-        welcom::welcom();
-    
+    welcom::welcom();
+
+    ctrlc::set_handler(|| {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+    })
+    .expect("failed to install Ctrl+C handler");
 
     loop {
+        if INTERRUPTED.swap(false, Ordering::SeqCst) {
+            println!("\n");
+        }
+
         let path = env::current_dir().unwrap_or_default();
         let display = path.display().to_string();
 
