@@ -22,6 +22,15 @@ fn read_line_with_prompt(prompt: &str) -> io::Result<Option<String>> {
     if bytes_read == 0 {
         Ok(None)
     } else {
+        input = input
+            .replace("\u{1b}[A", "")
+            .replace("\u{1b}[B", "")
+            .replace("\u{1b}[C", "")
+            .replace("\u{1b}[D", "")
+            .replace("^[[A", "")
+            .replace("^[[B", "")
+            .replace("^[[C", "")
+            .replace("^[[D", "");
         Ok(Some(input))
     }
 }
