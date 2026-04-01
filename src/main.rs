@@ -35,8 +35,11 @@ fn continuation_prompt(state: parser::ContinuationState) -> &'static str {
 }
 
 fn read_command() -> io::Result<Option<String>> {
-    let path = env::current_dir().unwrap_or_default();
-    let display = path.display().to_string();
+    let display = env::var("PWD").unwrap_or_else(|_| {
+        env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "?".to_string())
+    });
     let main_prompt = format!("\x1b[1;36m{}\x1b[0m \x1b[1;37m$\x1b[0m ", display);
 
     let Some(mut input) = read_line_with_prompt(&main_prompt)? else {
@@ -74,6 +77,9 @@ fn main() {
 
     let mut shell = Shell::new();
     welcom::welcom();
+    if let Ok(path) = env::current_dir() {
+        env::set_var("PWD", path.display().to_string());
+    }
 
     ctrlc::set_handler(|| {
         INTERRUPTED.store(true, Ordering::SeqCst);
