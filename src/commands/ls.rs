@@ -341,12 +341,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
         if meta.is_dir() {
             list_dir(path, &opts, multiple)?;
         } else {
-            // Single file: just print its name
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.display().to_string());
-            let base_name = escape_leading_special(&name);
+            // Single file: preserve the path the user asked for.
+            let name = path.display().to_string();
+            let base_name = if name.contains('/') {
+                name
+            } else {
+                escape_leading_special(&name)
+            };
             let display_name = if meta.file_type().is_symlink() {
                 decorate_symlink_long(&base_name, path, target.as_ref(), opts.classify)
             } else {
