@@ -1,4 +1,5 @@
 use chrono::{DateTime, Local};
+use nix::libc;
 use nix::unistd::{Gid, Group, Uid, User};
 use std::ffi::{CString, OsStr};
 use std::fs;
@@ -205,13 +206,14 @@ fn has_posix_acl_xattr(path: &Path) -> bool {
         return false;
     };
 
-    let size = unsafe { llistxattr(c_path.as_ptr(), std::ptr::null_mut(), 0) };
+    let size = unsafe { libc::llistxattr(c_path.as_ptr(), std::ptr::null_mut(), 0) };
     if size <= 0 {
         return false;
     }
 
     let mut buffer = vec![0_u8; size as usize];
-    let written = unsafe { llistxattr(c_path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len()) };
+    let written =
+        unsafe { libc::llistxattr(c_path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len()) };
     if written <= 0 {
         return false;
     }
@@ -223,14 +225,6 @@ fn has_posix_acl_xattr(path: &Path) -> bool {
             name == OsStr::new("system.posix_acl_access").as_bytes()
                 || name == OsStr::new("system.posix_acl_default").as_bytes()
         })
-}
-
-unsafe extern "C" {
-    fn llistxattr(
-        path: *const std::os::raw::c_char,
-        list: *mut std::os::raw::c_char,
-        size: usize,
-    ) -> isize;
 }
 
 fn list_dir(path: &Path, opts: &LsOptions, show_header: bool) -> Result<(), String> {
