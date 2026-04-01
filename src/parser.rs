@@ -14,6 +14,63 @@ pub enum Command {
     Unknown(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinuationState {
+    DoubleQuote,
+    SingleQuote,
+    Backslash,
+}
+
+pub fn continuation_state(input: &str) -> Option<ContinuationState> {
+    let mut in_double_quotes = false;
+    let mut in_single_quotes = false;
+    let mut chars = input.chars().peekable();
+    let mut trailing_backslash = false;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if !in_single_quotes => {
+                in_double_quotes = !in_double_quotes;
+                trailing_backslash = false;
+            }
+            '\'' if !in_double_quotes => {
+                in_single_quotes = !in_single_quotes;
+                trailing_backslash = false;
+            }
+            '\\' if !in_single_quotes => {
+                if in_double_quotes {
+                    match chars.peek().copied() {
+                        Some('"') | Some('\\') | Some('$') | Some('\n') => {
+                            trailing_backslash = false;
+                            chars.next();
+                        }
+                        Some(_) => trailing_backslash = false,
+                        None => trailing_backslash = true,
+                    }
+                } else {
+                    if chars.peek().is_some() {
+                        trailing_backslash = false;
+                        chars.next();
+                    } else {
+                        trailing_backslash = true;
+                    }
+                }
+            }
+            _ => trailing_backslash = false,
+        }
+    }
+
+    if in_double_quotes {
+        Some(ContinuationState::DoubleQuote)
+    } else if in_single_quotes {
+        Some(ContinuationState::SingleQuote)
+    } else if trailing_backslash {
+        Some(ContinuationState::Backslash)
+    } else {
+        None
+    }
+}
+
 pub fn parsing(input: &str) -> Result<(Command, Vec<String>), String> {
     let mut args = Vec::new();
     let mut current = String::new();
@@ -29,16 +86,21 @@ pub fn parsing(input: &str) -> Result<(Command, Vec<String>), String> {
             '\'' if !in_double_quotes => {
                 in_single_quotes = !in_single_quotes;
             }
-            '\\' if in_double_quotes => {
-                // Handle escape sequences inside double quotes
+            '\\' if !in_single_quotes => {
                 if let Some(next) = chars.next() {
-                    match next {
-                        '"' | '\\' | '$' | '\n' => current.push(next),
-                        _ => {
-                            current.push('\\');
-                            current.push(next);
+                    if in_double_quotes {
+                        match next {
+                            '"' | '\\' | '$' | '\n' => current.push(next),
+                            _ => {
+                                current.push('\\');
+                                current.push(next);
+                            }
                         }
+                    } else {
+                        current.push(next);
                     }
+                } else {
+                    current.push('\\');
                 }
             }
             ' ' | '\t' if !in_double_quotes && !in_single_quotes => {
