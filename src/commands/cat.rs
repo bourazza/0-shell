@@ -49,14 +49,23 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
     }
 
+    let mut errors = Vec::new();
+
     for filename in files {
         if filename == "-" {
-            print_stdin(number_lines)?;
+            if let Err(err) = print_stdin(number_lines) {
+                errors.push(err);
+            }
             continue;
         }
 
-        let contents =
-            fs::read_to_string(filename).map_err(|e| format!("cat: {}: {}", filename, e))?;
+        let contents = match fs::read_to_string(filename) {
+            Ok(contents) => contents,
+            Err(_) => {
+                errors.push(format!("cat: {}: No such file or directory", filename));
+                continue;
+            }
+        };
 
         if number_lines {
             for (i, line) in contents.lines().enumerate() {
@@ -68,5 +77,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
 
     io::stdout().flush().ok();
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }

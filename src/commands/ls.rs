@@ -326,20 +326,30 @@ fn format_mtime(time: SystemTime) -> String {
 pub fn run(args: &[String]) -> Result<(), String> {
     let (opts, paths) = parse_flags(args)?;
     let multiple = paths.len() > 1;
+    let mut errors = Vec::new();
+    let mut printed_any = false;
 
     for (i, path) in paths.iter().enumerate() {
-        if i > 0 {
+        if printed_any && i > 0 {
             println!();
         }
-        let meta =
-            fs::symlink_metadata(path).map_err(|e| format!("ls: {}: {}", path.display(), e))?;
+        let meta = match fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(_) => {
+                errors.push(format!("ls: {}: No such file or directory", path.display()));
+                continue;
+            }
+        };
         let target = if meta.file_type().is_symlink() {
             fs::read_link(path).ok()
         } else {
             None
         };
         if meta.is_dir() {
-            list_dir(path, &opts, multiple)?;
+            if let Err(err) = list_dir(path, &opts, multiple) {
+                errors.push(err);
+                continue;
+            }
         } else {
             // Single file: preserve the path the user asked for.
             let name = path.display().to_string();
@@ -374,7 +384,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 println!("{}", display_name);
             }
         }
+        printed_any = true;
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }

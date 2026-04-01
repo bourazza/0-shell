@@ -17,17 +17,21 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    let mut errors = Vec::new();
+
     for src_str in sources {
         let src = Path::new(src_str.as_str());
 
         if !src.exists() {
-            return Err(format!("mv: {}: No such file or directory", src_str));
+            errors.push(format!("mv: {}: No such file or directory", src_str));
+            continue;
         }
 
         let actual_dest = if dest.is_dir() {
-            let name = src
-                .file_name()
-                .ok_or_else(|| format!("mv: {}: invalid path", src_str))?;
+            let Some(name) = src.file_name() else {
+                errors.push(format!("mv: {}: invalid path", src_str));
+                continue;
+            };
             dest.join(name)
         } else {
             dest.to_path_buf()
@@ -36,16 +40,30 @@ pub fn run(args: &[String]) -> Result<(), String> {
         // Try rename first (same filesystem), fallback to copy+delete
         if fs::rename(src, &actual_dest).is_err() {
             if src.is_dir() {
-                copy_dir_all(src, &actual_dest)?;
-                fs::remove_dir_all(src).map_err(|e| format!("mv: {}: {}", src_str, e))?;
+                if let Err(err) = copy_dir_all(src, &actual_dest) {
+                    errors.push(err);
+                    continue;
+                }
+                if let Err(e) = fs::remove_dir_all(src) {
+                    errors.push(format!("mv: {}: {}", src_str, e));
+                }
             } else {
-                fs::copy(src, &actual_dest).map_err(|e| format!("mv: {}: {}", src_str, e))?;
-                fs::remove_file(src).map_err(|e| format!("mv: {}: {}", src_str, e))?;
+                if let Err(e) = fs::copy(src, &actual_dest) {
+                    errors.push(format!("mv: {}: {}", src_str, e));
+                    continue;
+                }
+                if let Err(e) = fs::remove_file(src) {
+                    errors.push(format!("mv: {}: {}", src_str, e));
+                }
             }
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {

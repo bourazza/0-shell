@@ -36,17 +36,21 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    let mut errors = Vec::new();
+
     for src_str in sources {
         let src = Path::new(src_str);
 
         if !src.exists() {
-            return Err(format!("cp: {}: No such file or directory", src_str));
+            errors.push(format!("cp: {}: No such file or directory", src_str));
+            continue;
         }
 
         let actual_dest = if dest.is_dir() {
-            let name = src
-                .file_name()
-                .ok_or_else(|| format!("cp: {}: invalid path", src_str))?;
+            let Some(name) = src.file_name() else {
+                errors.push(format!("cp: {}: invalid path", src_str));
+                continue;
+            };
             dest.join(name)
         } else {
             dest.to_path_buf()
@@ -54,15 +58,24 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
         if src.is_dir() {
             if !recursive {
-                return Err(format!("cp: {}: is a directory (use -r to copy)", src_str));
+                errors.push(format!("cp: {}: is a directory (use -r to copy)", src_str));
+                continue;
             }
-            copy_dir_all(src, &actual_dest)?;
+            if let Err(err) = copy_dir_all(src, &actual_dest) {
+                errors.push(err);
+            }
         } else {
-            fs::copy(src, &actual_dest).map_err(|e| format!("cp: {}: {}", src_str, e))?;
+            if let Err(e) = fs::copy(src, &actual_dest) {
+                errors.push(format!("cp: {}: {}", src_str, e));
+            }
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {

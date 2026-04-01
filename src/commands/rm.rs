@@ -1,5 +1,16 @@
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn current_dir_path() -> Option<PathBuf> {
+    env::current_dir().ok().or_else(|| env::var("PWD").ok().map(PathBuf::from))
+}
+
+fn targets_current_directory(path: &Path, current_dir: &Path) -> bool {
+    fs::canonicalize(path)
+        .map(|resolved| current_dir.starts_with(&resolved))
+        .unwrap_or(false)
+}
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -28,6 +39,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("rm: missing operand".to_string());
     }
 
+    let mut errors = Vec::new();
+    let current_dir = current_dir_path();
+
     for target in targets {
         let path = Path::new(target);
 
@@ -35,18 +49,38 @@ pub fn run(args: &[String]) -> Result<(), String> {
             if force {
                 continue;
             }
-            return Err(format!("rm: {}: No such file or directory", target));
+            errors.push(format!("rm: {}: No such file or directory", target));
+            continue;
         }
 
         if path.is_dir() {
             if !recursive {
-                return Err(format!("rm: {}: is a directory (use -r to remove)", target));
+                errors.push(format!("rm: {}: is a directory (use -r to remove)", target));
+                continue;
             }
-            fs::remove_dir_all(path).map_err(|e| format!("rm: {}: {}", target, e))?;
+            if current_dir
+                .as_ref()
+                .is_some_and(|dir| targets_current_directory(path, dir))
+            {
+                errors.push(format!(
+                    "rm: cannot remove '{}': current directory or parent",
+                    target
+                ));
+                continue;
+            }
+            if let Err(e) = fs::remove_dir_all(path) {
+                errors.push(format!("rm: {}: {}", target, e));
+            }
         } else {
-            fs::remove_file(path).map_err(|e| format!("rm: {}: {}", target, e))?;
+            if let Err(e) = fs::remove_file(path) {
+                errors.push(format!("rm: {}: {}", target, e));
+            }
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }

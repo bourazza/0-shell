@@ -20,6 +20,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("mkdir: missing operand".to_string());
     }
 
+    let mut errors = Vec::new();
+
     for dir in dirs {
         let path = Path::new(dir);
         let result = if parents {
@@ -27,8 +29,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
         } else {
             fs::create_dir(path)
         };
-        result.map_err(|e| format!("mkdir: {}: {}", dir, e))?;
+        if let Err(e) = result {
+            errors.push(format!("mkdir: {}: {}", dir, e));
+        }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }
