@@ -1,6 +1,8 @@
 use chrono::{DateTime, Local};
 use nix::unistd::{Gid, Group, Uid, User};
+use std::ffi::{CString, OsStr};
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -116,16 +118,48 @@ fn decorate_entry(name: &str, meta: &fs::Metadata, classify: bool) -> String {
     if !classify {
         return name.to_string();
     }
+    format!("{}{}", name, classification_suffix(meta))
+}
+
+fn classification_suffix(meta: &fs::Metadata) -> &'static str {
+    let ft = meta.file_type();
     let is_dir = meta.is_dir();
     let is_exec = meta.permissions().mode() & 0o111 != 0;
-    let suffix = if is_dir {
+    if is_dir {
         "/"
+    } else if ft.is_symlink() {
+        "@"
+    } else if ft.is_fifo() {
+        "|"
+    } else if ft.is_socket() {
+        "="
     } else if is_exec {
         "*"
     } else {
         ""
-    };
-    format!("{}{}", name, suffix)
+    }
+}
+
+fn decorate_symlink_long(
+    name: &str,
+    entry_path: &Path,
+    target: Option<&PathBuf>,
+    classify: bool,
+) -> String {
+    let target_display = target
+        .map(|t| t.display().to_string())
+        .unwrap_or_else(|| "?".to_string());
+
+    if !classify {
+        return format!("{} -> {}", name, target_display);
+    }
+
+    let suffix = fs::metadata(entry_path)
+        .ok()
+        .map(|meta| classification_suffix(&meta))
+        .unwrap_or("");
+
+    format!("{} -> {}{}", name, target_display, suffix)
 }
 
 fn escape_leading_special(name: &str) -> String {
@@ -155,6 +189,50 @@ fn lookup_group(gid: u32) -> String {
         .unwrap_or_else(|| gid.as_raw().to_string())
 }
 
+fn has_acl_marker(path: &Path) -> bool {
+    has_posix_acl_xattr(path)
+}
+
+fn format_mode_with_acl(path: &Path, meta: &fs::Metadata) -> String {
+    let mut perms = format_permissions(meta);
+    perms.push(if has_acl_marker(path) { '+' } else { ' ' });
+    perms
+}
+
+fn has_posix_acl_xattr(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_bytes();
+    let Ok(c_path) = CString::new(bytes) else {
+        return false;
+    };
+
+    let size = unsafe { llistxattr(c_path.as_ptr(), std::ptr::null_mut(), 0) };
+    if size <= 0 {
+        return false;
+    }
+
+    let mut buffer = vec![0_u8; size as usize];
+    let written = unsafe { llistxattr(c_path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len()) };
+    if written <= 0 {
+        return false;
+    }
+
+    buffer[..written as usize]
+        .split(|b| *b == 0)
+        .filter(|name| !name.is_empty())
+        .any(|name| {
+            name == OsStr::new("system.posix_acl_access").as_bytes()
+                || name == OsStr::new("system.posix_acl_default").as_bytes()
+        })
+}
+
+unsafe extern "C" {
+    fn llistxattr(
+        path: *const std::os::raw::c_char,
+        list: *mut std::os::raw::c_char,
+        size: usize,
+    ) -> isize;
+}
+
 fn list_dir(path: &Path, opts: &LsOptions, show_header: bool) -> Result<(), String> {
     if show_header {
         println!("{}:", path.display());
@@ -167,7 +245,7 @@ fn list_dir(path: &Path, opts: &LsOptions, show_header: bool) -> Result<(), Stri
 
     entries.sort_by_key(|e| e.file_name());
 
-    let mut all_entries: Vec<(String, fs::Metadata, Option<PathBuf>)> = Vec::new();
+    let mut all_entries: Vec<(String, PathBuf, fs::Metadata, Option<PathBuf>)> = Vec::new();
 
     // Add . and .. if -a
     if opts.all {
@@ -177,10 +255,10 @@ fn list_dir(path: &Path, opts: &LsOptions, show_header: bool) -> Result<(), Stri
             .ok()
             .or_else(|| dot_meta.clone());
         if let Some(m) = dot_meta {
-            all_entries.push((".".to_string(), m, None));
+            all_entries.push((".".to_string(), path.join("."), m, None));
         }
         if let Some(m) = dotdot_meta {
-            all_entries.push(("..".to_string(), m, None));
+            all_entries.push(("..".to_string(), path.join(".."), m, None));
         }
     }
 
@@ -189,21 +267,26 @@ fn list_dir(path: &Path, opts: &LsOptions, show_header: bool) -> Result<(), Stri
         if !opts.all && name.starts_with('.') {
             continue;
         }
-        let meta = fs::symlink_metadata(entry.path()).map_err(|e| format!("ls: {}", e))?;
+        let entry_path = entry.path();
+        let meta = fs::symlink_metadata(&entry_path).map_err(|e| format!("ls: {}", e))?;
         let target = if meta.file_type().is_symlink() {
-            fs::read_link(entry.path()).ok()
+            fs::read_link(&entry_path).ok()
         } else {
             None
         };
-        all_entries.push((name, meta, target));
+        all_entries.push((name, entry_path, meta, target));
     }
 
     if opts.long {
         // Calculate total blocks
-        let total: u64 = all_entries.iter().map(|(_, m, _)| m.blocks()).sum::<u64>() / 2;
+        let total: u64 = all_entries
+            .iter()
+            .map(|(_, _, m, _)| m.blocks())
+            .sum::<u64>()
+            / 2;
         println!("total {}", total);
 
-        for (name, meta, target) in &all_entries {
+        for (name, entry_path, meta, target) in &all_entries {
             let nlink = meta.nlink();
             let user = lookup_user(meta.uid());
             let group = lookup_group(meta.gid());
@@ -213,40 +296,26 @@ fn list_dir(path: &Path, opts: &LsOptions, show_header: bool) -> Result<(), Stri
             // Format time
             let time_str = format_mtime(mtime);
 
-            let perm_str = format_permissions(meta);
+            let perm_str = format_mode_with_acl(entry_path, meta);
             let base_name = escape_leading_special(name);
             let display_name = if meta.file_type().is_symlink() {
-                if let Some(t) = target {
-                    format!("{} -> {}", base_name, t.display())
-                } else {
-                    format!("{} -> ?", base_name)
-                }
+                decorate_symlink_long(&base_name, entry_path, target.as_ref(), opts.classify)
             } else {
-                base_name
+                decorate_entry(&base_name, meta, opts.classify)
             };
-            let decorated = decorate_entry(&display_name, meta, opts.classify);
 
             println!(
                 "{} {:>3} {:<8} {:<8} {} {} {}",
-                perm_str, nlink, user, group, size_or_dev, time_str, decorated
+                perm_str, nlink, user, group, size_or_dev, time_str, display_name
             );
         }
     } else {
         // Short listing: names separated by spaces
         let names: Vec<String> = all_entries
             .iter()
-            .map(|(name, meta, target)| {
+            .map(|(name, _, meta, _)| {
                 let base_name = escape_leading_special(name);
-                let display_name = if meta.file_type().is_symlink() && opts.classify {
-                    if let Some(t) = target {
-                        format!("{} -> {}", base_name, t.display())
-                    } else {
-                        format!("{} -> ?", base_name)
-                    }
-                } else {
-                    base_name
-                };
-                decorate_entry(&display_name, meta, opts.classify)
+                decorate_entry(&base_name, meta, opts.classify)
             })
             .collect();
         println!("{}", names.join("  "));
@@ -285,15 +354,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 .unwrap_or_else(|| path.display().to_string());
             let base_name = escape_leading_special(&name);
             let display_name = if meta.file_type().is_symlink() {
-                if let Some(t) = target {
-                    format!("{} -> {}", base_name, t.display())
-                } else {
-                    format!("{} -> ?", base_name)
-                }
+                decorate_symlink_long(&base_name, path, target.as_ref(), opts.classify)
             } else {
-                base_name
+                decorate_entry(&base_name, &meta, opts.classify)
             };
-            let decorated = decorate_entry(&display_name, &meta, opts.classify);
             if opts.long {
                 let nlink = meta.nlink();
                 let user = lookup_user(meta.uid());
@@ -303,16 +367,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 let time_str = format_mtime(mtime);
                 println!(
                     "{} {:>3} {:<8} {:<8} {} {} {}",
-                    format_permissions(&meta),
+                    format_mode_with_acl(path, &meta),
                     nlink,
                     user,
                     group,
                     size_or_dev,
                     time_str,
-                    decorated
+                    display_name
                 );
             } else {
-                println!("{}", decorated);
+                println!("{}", display_name);
             }
         }
     }
