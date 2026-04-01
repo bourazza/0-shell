@@ -41,6 +41,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     let mut number_lines = false;
     let mut files: Vec<&str> = Vec::new();
+    let mut ended_with_newline = true;
 
     for arg in args {
         match arg.as_str() {
@@ -71,11 +72,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
             for (i, line) in contents.lines().enumerate() {
                 println!("{:>6}\t{}", i + 1, line);
             }
+            ended_with_newline = true;
         } else {
             print!("{}", contents);
+            ended_with_newline = contents.ends_with('\n');
         }
     }
 
+    if !ended_with_newline {
+        println!();
+    }
     io::stdout().flush().ok();
     if errors.is_empty() {
         Ok(())
